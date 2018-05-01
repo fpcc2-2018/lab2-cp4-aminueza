@@ -3,42 +3,161 @@ title: "EDA do log de eventos"
 output: html_notebook
 ---
 
-## O quê
+###1) Introdução
 
 Como usamos dados derivados dos logs de eventos da wikimedia, aqui primeiro exploramos esses logs para entender como os eventos foram coletados, e para procurar características inesperadas. 
 
-```{r}
+###2) Análise Exploratória
+
+Primeiro é necessário verificar as bibliotecas:
+
+```{r message=FALSE, warning=FALSE}
 library(tidyverse)
 library(lubridate)
+library(dplyr)
 theme_set(theme_bw())
 ```
 
-## Lendo os eventos
+Após, a leitura dos dados é realizada, para as variáveis da tabela **events**:
 
 ```{r ETL}
 events = read_csv("https://github.com/wikimedia-research/Discovery-Hiring-Analyst-2016/raw/master/events_log.csv.gz")
+```
 
-events = events %>% slice(1:5e4) # Útil para testar código em dados pequenos. Comente na hora de processá-los para valer.
+Conforme o alto processamento pela quantidade do número de dados, para pequenos experimentos, é necessário fazer a redução da tabela para pelo menos 50,000 dados:
 
+```{r ETL, warning=FALSE}
+events = events %>% slice(1:5e4)
+```
+
+Nesta etapa, será necessário filtrar os eventos com seções únicas e que apresentaram ações de *searchResultPage*:
+```{r ETL}
 events = events %>% 
+    distinct(session_id, .keep_all = TRUE) %>%
     group_by(session_id) %>% 
     arrange(timestamp) %>% 
-    mutate(search_index = cumsum(action == "searchResultPage"), # contador de buscas na sessão.
+    mutate(search_index = cumsum(action == "searchResultPage"),
            date = ymd_hms(timestamp))  %>% 
     ungroup()
 ```
 
-## No tempo
+###2) Variáveis
 
+Para verificar os eventos coletados, foi necessário a delimitação das variáveis:
 
 ```{r}
-events %>% 
-    mutate(date = round_date(date, unit = "day")) %>% 
-    count(date, group) %>% 
-    ggplot(aes(x = date, y = n, fill = group)) + 
-    geom_area()
+colnames(events)
 ```
 
-## Por tipo
+1. **uuid**: identificador único universal (UUID) dos eventos.
+2. **timestamp**: data e hora dos eventos, em formato YYYYMMDDhhmmss.
+3. **session_id**: ID único das sessões.
+4. **group**: Uma marca "a" ou "b".
+5. **action**: ação do evento, podendo ser *searchResultPage*, *visitPage* e *checkin*.
+6. **checkin**: quantidade de segundos que uma página ficou aberta.
+7. **page_id**: ID de uma página clicada ou visitada.
+8. **n_results**: Número de ocorrências de páginas pesquisadas e retornadas ao usuário.
+9. **result_position**: A posição do link das páginas visitadas nos resultados da pesquisa.
+10. **search_index**: quantidade de páginas visitadas
+11. **date**: data do evento em YYYY-MM-DD hh:mm:ss.
 
-## Etc.
+Algumas características da variável ação precisam ser esclarecidas:
+
+**searchResultPage**: refere-se a uma nova pesquisa realizada e mostrada ao usuário na Página de Retorno de Motor de Busca (SERP).
+**visitPage**: refere-se ao click do usuário em um link dos resultados.
+**checkin**: refere-se ao permanecimento do usuário na página por um período de tempo pré-especificado.
+
+## Análise dos Eventos
+
+Quantidade de eventos por hora e para cada grupo (a ou b):
+```{r}
+events %>% 
+    mutate(date = round_date(date, unit = "hour")) %>% 
+    count(date, group) %>% 
+    ggplot(aes(x = date, y = n, color = group)) + 
+    scale_color_manual(values = c(a = "red", b = "navy")) +
+    geom_line() + theme_classic()
+```
+
+*Click Through Rate* total por grupo:
+
+```{r}
+CRT = events %>%
+  group_by(group) %>% 
+  summarise(searches=sum(search_index),
+            visits=sum(action=="visitPage"))%>%
+  mutate(CTR=as.numeric(round(visits/searches*100,2)))
+
+  CRT %>% 
+    ggplot(aes(x = group, y = CTR)) + 
+  geom_bar(position = "dodge", aes(fill = group),
+             width=.5, stat = "identity") +
+  scale_y_continuous(labels=function(x) paste0(x,"%")) +
+  coord_flip() +
+  scale_fill_manual(label=sprintf("%.1f", 
+                         round(CRT$CTR)), values = c(a = "red", b = "navy")) +
+  labs(x ="Groups", 
+         y = "\nClick Through Rate (CTR)",
+         fill = "Groups")
+```
+
+Média de Pesquisas e Cliques por sessão:
+```{r}
+CRT_session_clicked = events %>%
+  group_by(session_id) %>% 
+  summarise(clicked=("visitPage" %in% action)) %>% 
+  summarise(CTR_session=round(mean(clicked)*100,2),
+            type = "Visited Page")
+
+CRT_session_searched = events %>%
+  group_by(session_id) %>% 
+  summarise(searched=("searchResultPage" %in% action)) %>% 
+  summarise(CTR_session=round(mean(searched)*100,2),
+            type = "Searched Page")
+
+crt_merged = merge(CRT_session_clicked,CRT_session_searched, all=TRUE)
+
+crt_merged %>% 
+    ggplot(aes(x = type, y = CTR_session, fill = type)) +
+    geom_bar (position = "dodge",
+             width=.5, stat = "identity") +
+    geom_text(aes(x = type, label=sprintf("%.0f%%", 
+                            round(crt_merged$CTR_session))),
+              color="#201d1d", size=4, 
+              position = position_dodge(width = 0.5), hjust = -0.25) +
+  coord_flip() +
+  scale_y_continuous(labels=function(x) paste0(x,"%"), 
+                    limits = c(0, 1.1 * max(crt_merged$CTR_session))) +
+  labs(y = "Overall by Session",
+       x = NULL) + theme_classic() + theme(legend.position="none")
+```
+```{r}
+CRT_session_checkin = events %>%
+  group_by(session_id, group, date) %>% 
+  filter(action=="checkin") %>%
+  summarise(time=round(checkin)) 
+
+
+CRT_session_checkin %>% 
+    ggplot(aes(x = date, y = time, color=group)) + 
+    geom_point(alpha = 1/4, position = position_jitter(width = .4)) + 
+   # scale_y_log10() +
+    facet_grid(.~group) +
+    xlab("Linguagens") +
+    ylab("Falhas de build")
+```
+```{r}
+ctr_wikimedia %>%
+    group_by(session_start_date) %>% 
+    ggplot(aes(x = session_start_date , y = ctr, color = group)) +
+    scale_color_manual(labels = c("A", "B"), values = c(a = "navy", b = "red")) +
+    geom_point(position = position_jitter(width = 0.2), alpha = 0.8) +
+    #scale_y_ +
+    labs(x=NULL, 
+         y='Click Through Rate (CTR)',
+         caption="Source: Wikimedia") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+````

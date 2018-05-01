@@ -6,11 +6,12 @@ message("Lendo dados brutos de eventos")
 
 events = read_csv("https://github.com/wikimedia-research/Discovery-Hiring-Analyst-2016/raw/master/events_log.csv.gz")
 
-# events = events %>% slice(1:5e4) # Útil para testar código em dados pequenos. Comente na hora de processá-los para valer.
+#events = events %>% slice(1:5e4) # Útil para testar código em dados pequenos. Comente na hora de processá-los para valer.
 
 message("Transformando em dados por busca")
 
 events = events %>% 
+    filter("searchResultPage" %in% action) %>%
     group_by(session_id) %>% 
     arrange(timestamp) %>% 
     mutate(search_index = cumsum(action == "searchResultPage")) # contador para as buscas nessa sessão.
@@ -28,10 +29,10 @@ searches = events %>%
                              NA_integer_, 
                              first(na.omit(result_position))
         )
-    ) %>% 
+    ) %>% mutate(crt = num_clicks/search_index * 100) %>%
     filter(search_index > 0) # Apenas search sessions
 
-out_file = here("data/search_data.csv")
+out_file = here("lab2-cp4-aminueza/data/search_data.csv")
 
 message("Salvando em ", out_file)
 

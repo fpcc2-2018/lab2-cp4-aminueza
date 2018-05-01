@@ -1,0 +1,437 @@
+---
+title: "FPCC II - Lab 2, Checkpoint 2"
+author: "Amanda Souza"
+date: "29/04/2018"
+output: html_document
+---
+
+Sumário Executivo: Discovery Hiring Analyst 2016
+===============
+
+### Sumário
+1. Introdução
+2. Perguntas a responder
+3. Variáveis
+4. Análise Exploratória
+5. Respondendo as perguntas
+6. Conclusão
+
+###1) Introdução
+Os dados, coletados com duração de um pouco mais de uma semana, são provenientes de um modelo de rastreamento que a [Wikimedia Foundation](https://grafana.wikimedia.org/dashboard/db/eventlogging-schema) usa para avaliar o nível de satisfação do usuário. Os computadores dos usuários são rastreados anonimamente e atoriamente por um esquema que usa um sistema de *ping* a esse computador(es) para estimar por quanto tempo os usuários permanecem nas páginas que visitam. 
+
+O objetivo deste laboratório é analisar os dados do registro de eventos para rastrear uma variedade de métricas de desempenho:
+
+**Taxa de cliques**: a proporção de sessões da pesquisa em que o usuário clicou em um dos resultados exibidos.
+
+**Taxa de resultados zero**: a proporção de pesquisas que resultaram em zero resultados.
+
+###2) Perguntas a responder
+O objetivo desta atividade é responder as perguntas questionadas no [desafio do wikimedia em 2016](https://github.com/wikimedia-research/Discovery-Hiring-Analyst-2016), para o recrutamento de novos analistas de dados. As perguntas são descritas abaixo:
+
+1. What is our daily overall clickthrough rate? How does it vary between the groups?
+
+2. Which results do people tend to try first? How does it change day-to-day?
+
+3. What is our daily overall zero results rate? How does it vary between the groups?
+
+4. Let session length be approximately the time between the first event and the last event in a session. Choose a variable from the dataset and describe its relationship to session length. Visualize the relationship.
+
+5. Summarize your findings in an *executive summary*.
+
+###3) Análise Exploratória
+
+Primeiro é necessário verificar as bibliotecas: 
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(lubridate)
+library(scales)
+library(here)
+```
+
+Após, a leitura dos dados é realizada, para as variáveis da tabela **wikimedia**:
+
+```{r message=FALSE, warning=FALSE}
+wikimedia = read_csv("/Users/amandasouza/lab2-cp4-aminueza/data/search_data.csv")
+```
+
+Conforme o alto processamento pela quantidade do número de dados, para pequenos experimentos, é necessário fazer a redução da tabela para pelo menos 50,000 dados:
+
+```{r eval=FALSE, warning=FALSE, include=FALSE}
+wikimedia = wikimedia %>% slice(1:5e4)
+```
+
+Nesta etapa, será necessário filtrar os eventos com seções únicas:
+
+```{r ETL}
+wikimediad = wikimedia %>% 
+    distinct(session_id, .keep_all = T) 
+```
+
+###4) Variáveis
+
+Para verificar os eventos coletados, foi necessário a delimitação das variáveis:
+
+```{r}
+colnames(wikimediad)
+```
+
+1. **session_id**: ID único das sessões.
+2. **search_index**: quantidade de páginas pesquisadas.
+3. **session_start_timestamp**: timestamp dos eventos.
+4. **session_start_date**: data do evento em YYYY-MM-DD hh:mm:ss. 
+5. **group**: Uma marca "a" ou "b".
+6. **results**: Número de ocorrências de páginas pesquisadas e retornadas ao usuário.
+7. **num_clicks**: quantidade de páginas visitadas.
+8. **first_click**: A posição do link das páginas visitadas nos resultados da pesquisa.
+9. **crt**: taxa de cliques nos resultados exibidos a cada sessão.
+ 
+###4) Respondendo as perguntas
+
+**1. What is our daily overall clickthrough rate? How does it vary between the groups?**
+
+Primeiramente, começamos a entender qual é a taxa de cliques média diária dos usuários, separados a cada 12 horas:
+```{r warning=FALSE}
+ctr_wikimedia = wikimediad %>%
+  mutate(session_start_date = round_date(session_start_date, unit = "12 hours"))
+
+ctr_wikimedia <- ctr_wikimedia %>% 
+  group_by(session_start_date, group) %>% 
+  summarise(search = sum(search_index),
+            click = sum(num_clicks))
+
+ctr_wikimedia %>%
+  group_by(session_start_date) %>% 
+  gather(key = type, value = value, 3:4) %>% 
+  ggplot(aes(session_start_date, value)) +
+  geom_bar(aes(fill = type), stat = "identity", position = "dodge") +
+  scale_fill_brewer(palette="Set1") +
+  labs(title = "C", 
+       y = "Overall by day (12 hours)",
+       x = NULL) + theme_classic()
+```
+
+Conforme o gráfico, é possível identificar um número maior de dados a partir das 12:00 horas. Também, é possível identificar uma diminuição nas pesquisas e cliques entre os dias 01 e 09 de março de 2016. Analisando os mesmos dados por hora, temos:
+```{r}
+wikimedia_hour = wikimediad %>% 
+    mutate(date = round_date(session_start_date, unit = "hour")) %>% 
+    count(date, group) %>% 
+    ggplot(aes(x = date, y = n, color = group)) + 
+    scale_color_manual(values = c(a = "red", b = "navy")) +
+    geom_line() + 
+  labs(y = "Overall by hour",
+       x = NULL,
+       color = "Group") +
+  theme_classic()
+wikimedia_hour
+```
+
+No gráfico de agrupamento das sessões por hora, é possível identificar um alto número de pesquisas e cliques em horário comercial, e uma redução dos acessos durante a madrugada. Um possível explicação seria que a maior parte dos dados são proveniente dos servidores da Wikimedia dos Estados Unidos, sendo três servidores localizados em [Virgínia, San Francisco e Texas](https://meta.wikimedia.org/wiki/Wikimedia_servers). Dessa forma, o número de acessos é maior em horário comercial devido a maior concentração de pessoas na rede durante esse horário. E os horários durante a madrugada apresentariam um menor número de acessos, por causa que a maioria dos usuários ativos estariam dormindo. Mas essa afirmação é apenas uma hipótese.
+
+Podemos descobrir quantas visitam são realizadas ao site por dia, no intervalo de 12 horas, para cada tipo do grupo. Analisando os dados, temos:
+```{r}
+ctr_wikimedia %>%
+  group_by(session_start_date) %>% 
+  gather(key = type, value = value, 3:4) %>% 
+  ggplot(aes(session_start_date, value)) +
+  geom_bar(aes(fill = type), stat = "identity", position = "dodge") +
+  facet_grid(group ~ .) +
+  scale_fill_brewer(palette="Set1") +
+  labs(title = "Overall Clicks/Searches by Groups", 
+       y = "Overall by day (12 hours)",
+       x = NULL) + theme_classic()
+```
+
+É possível visualizar que o número de linhas em que uma pesquisa foi realizada e cliques pelo grupo A é maior que o grupo B.
+
+Respondendo a pergunta, primeiro é preciso entender o conceito de *ClickThrough Rate* (CTR). CRT ou taxa de cliques é calculado como a proporção de anúncios clicados pelos resultados exibidos a cada sessão. Assim, temos: 
+\begin{equation}CTR = \frac{ResultadosClicados}{TodosResultadosPesquisadosPorSessão}\end{equation}
+
+Para analisar por sessão, é necessário filtrar todos os eventos que possuem uma seção única e que apresentam uma Página de Retorno do Motor de Busca (SERP) associada a ela. Também, 
+
+```{r}
+#Removendo sessões duplicadas
+DOCR_wikimedia <- wikimediad %>% 
+  group_by(session_start_date, group) %>% 
+  summarise(allsession = n(),
+            click = sum(num_clicks > 0)
+  ) %>% 
+  mutate(ctr = click/allsession)
+
+#Calculando CTR por grupo
+DCR_wikimedia_overall <- DOCR_wikimedia %>%
+  group_by(group) %>%
+  summarise(crt = as.numeric(sum(ctr)))
+
+#Calculando a média do DOCR
+mean_DOCR = mean(DCR_wikimedia_overall$crt)
+
+#Apresentadndo os dados
+DCR_wikimedia_overall %>% 
+    ggplot(aes(x = reorder(group, crt), y = crt, fill = group)) + 
+    geom_bar(position = "dodge", aes(fill = group),
+             width=.5, stat = "identity") +
+    
+  scale_fill_manual(label=sprintf("%.0f", 
+                         round(DCR_wikimedia_overall$crt)), 
+                      values = alpha(c("#5a7cea","#b370bf", "#F0E442"))) +
+  labs(x ="Groups", 
+         y = "\nDaily Click Through Rate (CTR)",
+         fill = "CRT",
+       linetype = "Line") +
+  coord_flip()+
+  geom_hline(aes(yintercept = mean(DCR_wikimedia_overall$crt), linetype="Mean"), colour="#BB0000") + 
+  geom_text(aes(0.8,mean_DOCR,label=sprintf("%.0f", mean_DOCR), vjust = -0.5, angle= 90)) +
+  scale_y_continuous(limits = c(0, 1.2 * max(DCR_wikimedia_overall$crt))) +
+    theme_bw() +
+    theme(axis.text.x = element_text(face="bold", size=10), 
+          axis.text.y = element_text(face="bold", size=10),
+          plot.title = element_text(color="#201d1d", size=12, 
+                                    face="bold", hjust = 0.5),
+          axis.title = element_text(color="#201d1d", 
+                                    face="bold", size=11),
+          panel.grid.major.y = element_blank(),
+          legend.position = c(0.9, 0.3))
+```
+
+O Daily Overall Clickthrough Rate (DOCR) é a proporção de clickes em uma das páginas apresentadas nas buscas. O DOCR para os dados apresentados foi de 8788. Podemos ver que a taxa de cliques de grupo A é quase 25% a mais da média total e o dobro do grupo B.
+
+**2. Which results do people tend to try first? How does it change day-to-day?**
+
+Para descobrir quais *links* os clientes clicam primeiro, ou seja, os eventos de páginas visitadas depois da busca, será necessário obter o número de páginas que foram clicadas agrupadas por dia em diferentes sessões. Podemos dizer qual página foi visitada, obtendo o valor do *num_clicks* da página Web que foi visitada pela posição do primeiro clique (*first_click*) na Página de Retorno do Motor de Busca (SERP).
+
+```{r warning=FALSE}
+FVRD <- wikimediad %>%
+  filter(num_clicks > 1) %>%
+  arrange(session_id,session_start_timestamp) %>%
+  group_by(session_id) %>%
+  mutate(date = round_date(session_start_date, unit = "day")) %>%     summarise(first_click=sum(first_click),
+            date=last(date))
+
+FVRD_plot = FVRD %>%
+  ggplot(aes(x=date,y=first_click)) +
+    geom_jitter(shape=21,alpha=.3,fill="navy") +
+  labs(y="First Clicked Result by Day",
+       x=NULL) +
+    theme_classic()
+FVRD_plot
+```
+
+Selecionando apenas os primeiros resultados, é possível verificar uma concentração de cliques em até 20 resultados mostrados. É possível ainda verificar a presença de alguns *outliers* acima de 100. Esses valores representam os cliques em páginas que estão em resultados apresentados acima de 1000, assim, para não causar efeito nos resultados, é necessário filtrá-los.
+
+```{r warning=FALSE}
+#Filtrar os valores abaixo de 100 (outliers)
+FVRD_temp = FVRD %>% 
+    filter(first_click<=100) %>% 
+    group_by(first_click) %>% 
+    summarise(clicks_total=n()) %>%
+    mutate(first_click_on=as.factor(first_click)) %>%
+    #slice(1:8) %>%
+    ggplot(aes(x=first_click_on,y=clicks_total, fill = first_click_on)) + 
+    geom_bar (position = "dodge",
+             width=.5, stat = "identity") +
+    scale_fill_brewer(palette="Spectral",name="First Clicked Page:") +
+   labs(x="Proportion of Clicks",
+       y="N. Results") +
+  theme_classic() + theme(legend.position="none")
+FVRD_temp
+```
+
+O gráfico apresenta a proporção do primeiro clique na Página de Retorno do Motor de Busca (SERP) sem os outliers. Pode-se notar que a página mais clicada frequente apresentam-se no primeiro resultado listado. O número de cliques no restante dos resultados cai exponencialmente com a classificação da listagem. Uma suposição seria que o primeiro resultado retornado seja sempre o resultado mais relevante.
+
+Verificando a mudança de cliques por dia, temos:
+
+```{r warning=FALSE}
+FVRD %>%
+  filter(first_click<=100) %>% 
+  group_by(first_click, date) %>%
+  summarise(clicks_total=n()) %>%
+  mutate(first_click_on=as.factor(first_click)) %>%
+  ggplot(aes(x=date,color=first_click_on))+
+  geom_line(aes(y = clicks_total), size = 0.2) +
+  geom_point(aes(y = clicks_total), size = 2) +
+  scale_x_datetime(breaks = date_breaks("1 days"), labels = date_format("%d/%m")) +
+  labs(y="Proportion of Clicks",
+       x="Days") +
+  theme_classic() +
+  theme(legend.position="bottom")
+```
+
+O gráfico acima apresenta o número de cliques ao longo da semana. O primeiro resultado é o mais clicado, seguido pelo segundo e assim por diante. Como podemos ver ao longo da semana, os resultados são estáveis.O número de cliques no primeiro resultado parece ser de aproximadamente 200 no primeiro dia. No segundo e terceiro dia eles sobem 400-500, e depois caem para 200 no quarto dia e termina os restos dos dias com valor abaixo de 10. Podemos ver que existe uma queda significativa na taxa de cliques do primeiro resultado da pesquisa após o 5º dia. Também podemos ver o mesmo padrão para a taxa de cliques no segundo e terceiro resultado da pesquisa.
+
+
+**3. What is our daily overall zero results rate? How does it vary between the groups?**
+
+A taxa de Zero Resultados (ZRR) é a proporção de pesquisas que resultaram em zero resultados. A maioria dos sites tem a mesma página de resultados de pesquisa, independentemente do número de resultados. Assim, temos: 
+\begin{equation}ZRR = \frac{ZeroResultados}{TodosResultadosPesquisadosPorSessão}\end{equation}
+
+Primeiro, vamos verificar o total de zero resultados durante a semana. Para isso, vamos usar o intervalo de tempo de um dia e calcula a taxa de cliques dos zero resultados:
+```{r}
+zero_day = wikimediad %>% 
+  mutate(date = round_date(session_start_date, unit = "day"))
+
+zero =  zero_day %>%
+  group_by(date,group) %>%
+  summarise(zero = sum(results == 0),
+            total = n()) %>% 
+  mutate(rate = zero/total * 100) %>% 
+  na.omit()
+
+zero %>%
+  group_by(date) %>%
+  ggplot(aes(x=date, y = rate))+
+  geom_bar(stat = "identity", position = "dodge", fill="#5a7cea") +
+  scale_x_datetime(breaks = date_breaks("1 days"), 
+                   labels =   date_format("%d/%m")) +
+  labs(y="Zeros Searches(%)",
+       x="Day of Week") +
+  geom_hline(aes(yintercept = mean(rate), linetype="Mean"), colour="#BB0000") +
+  theme_classic()
+```
+Conforme o gráfico apresentado, é possível verificar que em todos os dias da semana o número de resultados zeros ficou sempre acima do valor médio de 15.91%. Ainda conforme um report de 2015 apresentado pelo [Wikimedia](https://upload.wikimedia.org/wikipedia/commons/7/74/Reducing_the_zero_results_rate_for_Wikipedia_%2828th_August_2015%29.pdf), o valor ideal de resultados zeros deve ser 12.50% de todas as pesquisas. Assim, a proporção de zeros resultados em 2016, continuava em alta, com quase 4% de diferença. 
+
+Analisando os mesmos dados, mas classificando-os por grupo, temos:
+
+```{r}
+zero %>%
+  group_by(date) %>%
+  ggplot(aes(x=date, y = rate))+
+  geom_bar(aes(fill = group), stat = "identity", position = "dodge") +
+  scale_x_datetime(breaks = date_breaks("1 days"), 
+                   labels =   date_format("%d/%m")) +
+  scale_fill_brewer(palette="Set1") +
+  labs(y="Zeros Searches(%)",
+       x="Day of Week") +
+  geom_hline(aes(yintercept = mean(rate), linetype="Mean"), colour="#BB0000") +
+  geom_hline(aes(yintercept = mean(rate) - 3.41, linetype="Goal"), colour="#BB0000") +
+  theme_classic()
+```
+Analisando o gráfico classificado por grupos, é possível verificar que a taxa média de zero resultados é sempre maior no grupo B do que no grupo A. Relacionando com a taxa de cliques por pesquisa, podemos verificar que o grupo B apresentou uma taxa de cliques menor que o grupo A. Isso demonstra uma relação com os zero resultados da pesquisa, pois se o número de cliques é menor no grupo B, a principal causa pode ser a taxa de zero resultados apresentado no grupo B, o que resultaria em menos cliques.
+
+Verificando a taxa de zero resultados com a o objetivo do Wikimedia, podemos concluir que nos dias 02/03 e 05/03 o grupo A apresentou valores aproximados a média esperada pelo Wikimedia. Um suposição seria a eficiência das pesquisas que o grupo A apresenta. Pesquisas com palavras-chaves coesas, apresentam melhores resultados, e como o grupo A apresentou uma taxa alta de CRT, isso significa que as pesquisas do grupo A são mais precisas do que o grupo B.
+
+Agora analisaremos a média total por grupo:
+
+```{r}
+overall = zero %>% 
+  group_by(group) %>%
+  summarise( mean_zero = mean(rate))
+
+overall %>%
+  ggplot(aes(group, mean_zero)) +
+  geom_bar(aes(fill = group), stat = "identity", position = "dodge") +
+  scale_fill_brewer(palette="Set1") +
+  labs(y="Zeros Searches(%)",
+       x="Group") +
+  geom_hline(aes(yintercept = mean(mean_zero), linetype="Mean"), colour="#BB0000") +
+  geom_hline(aes(yintercept = mean(mean_zero) - 3.41, linetype="Goal"), colour="#BB0000") +
+  coord_flip()+
+  theme_classic()
+```
+
+É possível analisar que o grupo B apresenta uma taxa total maior que o grupo A. Ainda o Grupo A é o mais próximo do valor ideal de zero resultados que o Wikimedia propos em 2015. Também, a taxa de zero resultados do grupo B encontra-se sempre acima da média total dos dados.
+
+
+**4. Let session length be approximately the time between the first event and the last event in a session. Choose a variable from the dataset and describe its relationship to session length. Visualize the relationship.**
+
+A duração da sessão pode ser calculada pela soma do tempo passado entre os eventos. Para analisarmos o tempo entre o primeiro evento e o segundo evento, precisamos dos dados sem o uso do *distinct* para remover as seções repetidas. Peimwieo vamos analisar o primeiro minuto das sessões:
+```{r warning=FALSE}
+session_lengh <- wikimedia %>%
+  group_by(session_id) %>%
+  arrange(session_start_timestamp) %>%
+  summarise(session_length=sum(diff(session_start_timestamp)),
+            group=group[1],
+            session_start_date=session_start_date[1]) %>%
+  filter(session_length>0) %>%
+  mutate(session_length_mins=as.numeric(session_length)/60)
+
+session_lengh %>%
+    filter(session_length>0 & session_length < 60) %>%
+    ggplot(aes(x = session_length)) + 
+    scale_x_continuous(breaks=seq(0,60,10)) +
+    geom_histogram(binwidth = 3, fill = "white", color = "navy") +
+    geom_rug(alpha = .1) +
+    labs(x="Session Lengh (AVG)")+
+  theme_classic()
+```
+
+Pelo gráfico acima, podemos verificar que a maioria das pessoas gasta pelo menos 10 segundos em uma sessão. Isso aponta duas suposições: a primeira que os usuários provavelmente não encontraram o que estavam procurando e a segunda que o usuário clicou erroneamente no *link*. Após 10 segundos há uma redução logaritma até o tempo de 40 segundos.
+
+```{r}
+session_lengh %>%
+    filter(session_length < 2000) %>%
+    ggplot(aes(x = session_length)) + 
+    scale_x_continuous(breaks=seq(0,2000,200)) +
+    geom_histogram(binwidth = 50, fill = "white", color = "navy") +
+    geom_rug(alpha = .10)+
+    labs(x="Session Lengh (AVG)")+
+  theme_classic()
+```
+
+Em seguida, os tempos de sessão vão caindo entre 160 até 1000 segundos. Vamos analisar se existe diferença entre a duração da sessão por grupo:
+
+```{r}
+session_lengh %>%
+    filter(session_length < 2000) %>%
+    ggplot(aes(x = session_length)) + 
+    scale_x_continuous(breaks=seq(0,2000,200)) +
+    geom_histogram(binwidth = 50, fill = "white", color = "navy") +
+    geom_rug(alpha = .10) +
+    facet_grid(group~.) +
+    labs(x="Session Lengh (AVG)")+
+  theme_classic()
+```
+
+O grupo A possui um tempo marior de tempo de sessão de até 100 segundos, enquanto o grupo B, apresenta uma quantidade aproximadamente três vezes menor com um tempo maior entre os 30 primeiros segundos. Analisando o média do tempo de sessão, temos:
+
+```{r}
+session_lengh %>%
+  group_by(group) %>% 
+  mutate(mean_dur = mean(session_length, na.rm = T)) %>% 
+  ggplot(aes(group, mean_dur)) +
+  geom_bar(aes(fill = group), stat = "identity", position = "dodge") +
+  scale_fill_brewer(palette="Set1") +
+  labs(y="Zeros Searches(%)",
+       x="Group") +
+  geom_hline(aes(yintercept = mean(mean_dur), linetype="Mean"), colour="navy") + coord_flip()+
+  theme_classic()
+```
+
+A média do tamanho do tempo da sessão para o grupo A está acima da média geral das sessões e o grupo A é quase 3 vezes maior que o grupo B. Uma possível explicação seria o CRT de A é maior do que o de B. Ou seja, o grupo A possui um número maior de cliques e consequentemente um tempo maior de sessões. Diferentemente do grupo B, que apresenta uma alta taxa de zero resultados, afetando o tempo de sessão deste grupo. Podemos analisar essa afirmação no gráfico abaixo:
+
+```{r}
+results_time <- wikimedia %>%
+  group_by(session_id) %>%
+  arrange(session_start_timestamp) %>%
+  mutate(session_length=sum(diff(session_start_timestamp)),
+            zero = sum(results == 0),
+            group=group[1],
+            session_start_date=session_start_date[1])
+
+results_time %>%
+  filter(session_length < 2000) %>%
+  group_by(group) %>%
+  ggplot(aes(x = session_length, y = zero, color = group)) +
+  geom_point(alpha = 1/4, position = position_jitter(width = .4)) +
+  facet_grid(group~.) +
+  theme_classic() +
+    labs(x="Session Lengh (AVG)",
+        y="Zero Results") 
+```
+
+O gráfico acima reafirma a hipótese de que os zeros resultados afetam diretamente no tempo da sessão. A grupo A apresentou um média bem menor de zero resultados e uma média maior de tamanho das sessões. O grupo B passa menos tempo nas seções por apresentar um maior número de zero resultados ou mesmo pesquisas não tão relevantes.
+
+###6) Conclusão
+
+Após a exploração dos dados do Wimedia Foundation, verificamos a influência da taxa de clique em oito dias para dois grupos diferentes. Algumas conclusões podem ser verificadas:
+
+1. O CRT do grupo A é maior do que o grupo B, e o fato pode ser influenciado pela taxa de zero resultados (ZRR) que é  maior no grupo B relacionado ao grupo A. Ou seja, se não houve resultados, consequentemente não é apresentado uma taxa alta de cliques.
+
+2. O tempo médio das sessões é maior no grupo A do que no grupo B. Esse fato também está diretamente relacionado ao CRT e ao ZRR. os usuários tendem a passar mais tempo nas sessões se elas apresentam resultados, pois elas teriam mais opções de visualização das páginas. Já para os zeros resultados, se não é apresentado resultado, o tempo de sessão tende a ser menor, pois o usuário perde o interesse na página e tende a procurar outras alternativas de busca.
+
+3. A maioria das pessoas clicaram no primeiro resultado apresentado. Pesquisas afirmam que os resultados [número 1](https://viverdeblog.com/7-passos-mais-trafego/) tendem a receber mais visitas. Consequentemente deve ter alguma relação entre o tamanho da sessão e o primeiro clique. Essa hipótese deverá ser analisada em trabalhos futuros.
+
+4. Relacionada ao tamanho das sessões, os usuários do grupo B gastaram menos tempo do que o grupo A. Uma hipótese é que as pesquisas do grupo A sejam mais relevantes do que o do grupo B, uma vez que os zeros resultados são menores e a taxa de clique é maior. O grupo B também apresentou um alto índice de sessões em até 10 segundos. Isso pode ratificar a hipótese sobre o grupo B de apresentar pesquisas menos relevantes. Ou mesmo na verificação de uma pesquisa que tenha alguma relação com o termo pesquisado, o usuário B clique na página apenas para verificar se o que foi procurado encontra-se na página clicada.
+
+Há ainda outros fatores que podem ser descobertos com uma segunda análise. Esses fatores serão explorados em trabalhos futuros.
