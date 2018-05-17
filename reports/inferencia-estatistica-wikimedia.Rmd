@@ -1,0 +1,385 @@
+---
+title: "FPCC II - Lab 3, Checkpoint 1"
+author: "Amanda Souza"
+date: "17/05/2018"
+output: html_document
+---
+
+Inferência Estatística: Discovery Hiring Analyst 2016
+===============
+
+### Sumário
+
+1. Introdução
+2. Respondendo as perguntas por meio de ICs
+3. Conclusão
+
+###1) Introdução
+
+Os dados analisados neste relatório podem ser melhor explorados no [Rpubs](http://rpubs.com/aminueza/DiscoveryHiringAnalyst2016) do laboratório anterior, provenientes de um modelo de rastreamento que a [Wikimedia Foundation](https://grafana.wikimedia.org/dashboard/db/eventlogging-schema) usa para avaliar o nível de satisfação do usuário. A proposta desse relatório é verificar as mesmas variáveis usando inferência estatística.
+
+###2) Respondendo as perguntas por meio de ICs
+
+**1. What is our daily overall clickthrough rate? How does it vary between the groups?**
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(knitr)
+library(lubridate)
+library(here)
+library(resample) # <-- Para bootstrap!
+library(boot) # <-- Para bootstrap!
+
+wikimedia = read_csv("/Users/amandasouza/lab2-cp4-aminueza/data/search_data.csv")
+```
+
+Primeiro é preciso tratar os dados, filtrando os eventos com sessões únicas e agrupando por data. Por fim, é necessário filtrar os dados que apresentam uma Página de Retorno do Motor de Busca (SERP) associada a sessão.
+
+```{r}
+#Removendo sessões duplicadas
+wikimediad = wikimedia %>% 
+    distinct(session_id, .keep_all = T) 
+
+#Agrupando por dia
+wikimediad = wikimediad %>%
+  mutate(session_start_date = round_date(session_start_date, unit = "day"))
+
+#Calculando CRT
+DOCR_wikimedia <- wikimediad %>% 
+  filter(results >= 1, !is.na(num_clicks)) %>%
+  group_by(session_start_date, group) %>% 
+  summarise(allsession = n(),
+            click = sum(num_clicks > 0)
+  ) %>% 
+  mutate(crt = click/allsession) 
+```
+
+Após o tratamento, vamos usar o bootstrap para realizar uma amostra da população e inferir onde está a média de `crt` *na população* com uma confiança de 95%. Também, vamos analisar a distribuição dos Intervalos de Confiança dessas amostras:
+
+```{r include=FALSE}
+fun.boot <- function(dados, indices) {
+    mean(dados[indices])
+}
+
+bootstraps <- boot(data = DOCR_wikimedia$crt, 
+                   statistic = fun.boot,
+                   R = 50000) # número de bootstraps
+
+boot.ci(bootstraps, conf = 0.95, type = "bca")
+boot.ci(bootstraps, conf = 0.95, type = "basic")
+boot.ci(bootstraps, conf = 0.95, type = "perc")
+boot.ci(bootstraps, conf = 0.95, type = "norm")
+```
+```{r}
+diferencas = tibble(dif = as.double(bootstraps$t) - mean(DOCR_wikimedia$crt))
+
+diferencas %>% 
+    ggplot(aes(x = dif)) + 
+    geom_histogram(binwidth = 0.01, fill = "white", color = "darkred") + geom_vline(xintercept = quantile(diferencas$dif, 0.025)[[1]]) + 
+  geom_vline(xintercept = quantile(diferencas$dif, 0.975)[[1]])
+```
+
+A distribuição dos ICs apresenta um distribuição simétrica, apresentando a média nos bootstraps em 95% dos cliques. Agora vamos analisar o Intervalo de confiança para a taxa de clliques pelo Grupo A e Grupo B:
+
+```{r include=FALSE}
+# #Calculando CRT
+DOCR_wikimedia_group <- wikimediad %>%
+  group_by(session_start_date, group) %>%
+  summarise(allsession = n(),
+            click = sum(num_clicks > 0)
+  ) %>%
+  mutate(crt = click/allsession)
+
+fun.boot <- function(dados, i) {
+    mediana <- dados %>% 
+            slice(i) %>%
+            group_by(session_start_date, group) %>%
+            summarise(crt = median(crt)) %>%
+            pull(crt)
+    
+    return(mediana[1] - mediana[2])
+}
+
+bootstraps_group <- boot(data = DOCR_wikimedia_group, 
+                 statistic = fun.boot, 
+                 R = 5000)
+
+boot.ci(bootstraps_group, conf = 0.95, type = "bca")
+boot.ci(bootstraps_group, conf = 0.95, type = "basic")
+boot.ci(bootstraps_group, conf = 0.95, type = "perc")
+boot.ci(bootstraps_group, conf = 0.95, type = "norm")
+
+```
+```{r echo=FALSE}
+fun_boot_a <- function(dados, i) {
+    mean(dados[i])
+}
+
+bootstraps_a <- boot(data = DOCR_wikimedia_group$crt[DOCR_wikimedia_group$group == "a"], statistic = fun_boot_a, 
+                 R = 5000)
+
+bootstraps_b <- boot(data = DOCR_wikimedia_group$crt[DOCR_wikimedia_group$group == "b"], statistic = fun_boot_a, 
+                 R = 5000)
+
+ci <- setNames(data.frame(matrix(ncol = 4, nrow = 2)), c("lower", "upper", "mean", "group"))
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps_a, conf = 0.95, type = "bca")$bca[4:5])
+ci[1, ] = bca[1:4]
+ci[1, ncol(ci) - 1]<- mean(bca)
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps_b, conf = 0.95, type = "bca")$bca[4:5])
+ci[2, ] = bca[1:4]
+ci[2, ncol(ci) - 1]<- mean(bca)
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps, conf = 0.95, type = "bca")$bca[4:5])
+ci[3, ] = bca[1:4]
+ci[3, ncol(ci) - 1]<- mean(bca)
+
+ci$group <- c("a", "b", "overall")
+
+ci %>%
+  ggplot(aes(x = 1, y = mean, color = group)) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), position = position_dodge(width = 1)) +
+  scale_color_brewer("Test CI Group", palette = "Set1", guide = guide_legend(ncol = 2)) +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0.05, 0.05)) +
+  labs(x = NULL, y = "CRT by Group") +
+  geom_text(aes(label = sprintf("%.1f%%", mean * 100), y = upper + 0.0025, vjust = "bottom"),
+            position = position_dodge(width = 1)) +
+  geom_hline(aes(yintercept = upper), linetype = "dashed", color = RColorBrewer::brewer.pal(3, "Set1")[3],
+             data = filter(ci, `group` == "overall")) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+O gráfico dos intervalos de Confiança da taxa de cliques mostra que o grupo A apresenta uma significativa diferença maior que o grupo B. Assim, a taxa de cliques do grupo A é maior do que o grupo B. Em relação a taxa total, é possível visualizar que o grupo A é o que possui uma aproximação maior na significância total, concluindo que a taxa de cliques do grupo A é maior que a taxa de cliques média por dia.
+
+**2. Which results do people tend to try first? How does it change day-to-day?**
+
+Primeiro, vamos limpar os dados:
+
+```{r include=FALSE}
+FVRD <- wikimediad %>%
+  filter(num_clicks > 1) %>%
+  arrange(session_id,session_start_timestamp) %>%
+  group_by(session_id) %>%
+  mutate(date = round_date(session_start_date, unit = "day")) %>%     summarise(first_click=sum(first_click),
+            date=last(date))
+
+FVRD_temp = FVRD %>% 
+    filter(first_click<=100) %>% 
+    group_by(first_click) %>% 
+    summarise(clicks_total=n()) %>%
+    mutate(first_click_on=as.factor(first_click))
+
+non_pared_bootstrap <- function(dado, indices){
+    d = dado %>% 
+      slice(indices) %>% 
+      group_by(first_click_on) %>% 
+      summarise(median_group = median(clicks_total)) %>% 
+      pull(median_group)
+    
+    return(d[1] - d[2])
+}
+
+bootstraps <- boot(data = FVRD_temp, 
+                   statistic = non_pared_bootstrap,
+                   R = 5000) # número de bootstraps
+
+glimpse(bootstraps$t)
+boot.ci(bootstraps, conf = 0.95, type = "bca")
+boot.ci(bootstraps, conf = 0.95, type = "basic")
+boot.ci(bootstraps, conf = 0.95, type = "perc")
+boot.ci(bootstraps, conf = 0.95, type = "norm")
+```
+```{r}
+diferencas_click = tibble(dif = as.double(bootstraps$t))
+
+diferencas_click %>% 
+  ggplot(aes(x = dif)) + 
+  geom_density() +
+  theme_classic()
+```
+
+O intervalo de confiança apresenta a proporção de cliques na Página de Retorno do Motor de Busca (SERP) sem os outliers. A diferença entre os resultados são significativas, porque a média observada representa a diminuição dos cliques à medida que diminui-se os resultados. Assim, pode-se notar que a página mais clicada frequente apresentam-se no primeiro resultado listado e o número de cliques no restante dos resultados cai com redução da classificação da listagem. 
+
+**3. What is our daily overall zero results rate? How does it vary between the groups?**
+
+Primeiro, é necessário fazer a manipulação dos dados:
+
+```{r include=FALSE}
+zero =  wikimediad %>%
+  group_by(session_start_date,group) %>%
+  summarise(zero = sum(results == 0),
+            total = n()) %>% 
+  mutate(rate = zero/total * 100) %>% 
+  na.omit()
+
+fun.boot <- function(dados, indices) {
+    median(dados[indices])
+}
+
+bootstraps <- boot(data = zero$rate, 
+                   statistic = fun.boot,
+                   R = 5000) # número de bootstraps
+
+glimpse(bootstraps$t)
+boot.ci(bootstraps, conf = 0.95, type = "bca")
+```
+
+```{r echo=FALSE}
+fun_boot <- function(dados, i) {
+    median(dados[i])
+}
+
+bootstraps_a <- boot(data = zero$rate[zero$group == "a"], statistic = fun_boot, R = 5000)
+
+bootstraps_b <- boot(data = zero$rate[zero$group == "b"], statistic = fun_boot, R = 5000)
+
+ci <- setNames(data.frame(matrix(ncol = 4, nrow = 2)), c("lower", "upper", "mean", "group"))
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps_a, conf = 0.95, type = "bca")$bca[4:5])
+ci[1, ] = bca[1:4]
+ci[1, ncol(ci) - 1]<- mean(bca)
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps_b, conf = 0.95, type = "bca")$bca[4:5])
+ci[2, ] = bca[1:4]
+ci[2, ncol(ci) - 1]<- mean(bca)
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps, conf = 0.95, type = "bca")$bca[4:5])
+ci[3, ] = bca[1:4]
+ci[3, ncol(ci) - 1]<- mean(bca)
+
+ci$group <- c("a", "b", "overall")
+
+ci %>%
+  ggplot(aes(x = 1, y = mean, color = group)) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), position = position_dodge(width = 1)) +
+  scale_color_brewer("Test CI Group", palette = "Set1", guide = guide_legend(ncol = 2)) +
+  scale_y_continuous(expand = c(0.05, 0.05)) +
+  labs(x = NULL, y = "ZeroRate by Group") +
+  geom_text(aes(label = sprintf("%.1f%%", mean), y = upper + 0.0025, vjust = "bottom"),
+            position = position_dodge(width = 1)) +
+  geom_hline(aes(yintercept = upper), linetype = "dashed", color = RColorBrewer::brewer.pal(3, "Set1")[3],
+             data = filter(ci, `group` == "overall")) +
+  geom_hline(aes(yintercept = lower), linetype = "dashed", color = RColorBrewer::brewer.pal(3, "Set1")[3],
+             data = filter(ci, `group` == "overall")) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+Analisando o gráfico dos intervalos de confiança por grupos, é possível verificar que existe uma diferença significativa dos zero resultados entre o grupo B do que no grupo A. Os ICs do grupo B são maiores que o grupo A, como tambem, um pouco maior que a média geral dos zero resultados. Assim, é possível concluir que o número de zero resultados é maior no grupo B, do que no grupo A. Relacionando com a taxa de cliques por pesquisa, podemos verificar que o grupo B apresentou uma taxa de cliques menor que o grupo A. Isso demonstra uma relação com os zero resultados da pesquisa, pois se o número de cliques é menor no grupo B, a principal causa pode ser a taxa de zero resultados apresentado no grupo B, o que resultaria em menos cliques.
+
+**4. Testar o que acontece se para a pergunta 1, em vez de comparar o grupo A com o grupo B (um teste A/B), você compara metade das sessões do grupo A (escolhida aleatoriamente) com outra metade das sessões do mesmo grupo (um teste A/A).**
+
+Primeiro é preciso selecionar os dados do grupo A, fazer as amostras aleatórias, para dois inferir os resultados:
+
+```{r include=FALSE}
+wikimedia_testa_a = wikimediad %>% 
+  group_by(session_start_date) %>% 
+  filter(group == 'a') %>%
+  summarise(allsession = n(),
+            click = sum(num_clicks > 0)
+  ) %>% 
+  mutate(crt = click/allsession) %>%
+  ungroup()
+
+wikimedia_testa_a = wikimedia_testa_a %>%
+  mutate(session_start_date = round_date(session_start_date, unit = "day"))
+
+repeticoes = wikimedia_testa_a %>%
+    nrow() * 1/2
+
+exp_com_bootstrap <- function(x){
+  boot_x <- sample(x, size = NROW(x), replace = TRUE) # aqui é o bootstrap
+  return(mean(boot_x))
+}
+
+fun_boot <- function(dados, i) {
+    median(dados[i])
+}
+
+experimentos = data_frame(i = 1:repeticoes)
+experimentos = experimentos %>% 
+  rowwise() %>% 
+  mutate(media_exp = exp_com_bootstrap(wikimedia_testa_a$crt),
+         group = "a")
+
+experimentos_a2 = data_frame(i = 1:repeticoes)
+experimentos_a2 = experimentos_a2 %>% 
+  rowwise() %>% 
+  mutate(media_exp = exp_com_bootstrap(wikimedia_testa_a$crt),
+         group = "a2")
+
+experimentos_finais = experimentos %>%
+  rbind(experimentos_a2)
+
+bootstraps <- boot(data = experimentos_finais$media_exp, statistic = fun_boot, R = 5000)
+
+glimpse(bootstraps$t)
+boot.ci(bootstraps, conf = 0.95, type = "bca")
+boot.ci(bootstraps, conf = 0.95, type = "basic")
+boot.ci(bootstraps, conf = 0.95, type = "perc")
+boot.ci(bootstraps, conf = 0.95, type = "norm")
+```
+```{r}
+diferencas = tibble(dif = as.double(bootstraps$t) - mean(experimentos_finais$media_exp))
+
+diferencas %>% 
+  ggplot(aes(x = dif)) + 
+  geom_histogram(binwidth = 0.003, fill = "white", color = "blue") + 
+  geom_vline(xintercept = quantile(diferencas$dif, 0.025)[[1]]) + 
+  geom_vline(xintercept = quantile(diferencas$dif, 0.975)[[1]])
+```
+
+O gráfico acima apresenta o valor das diferenças dos boostraps, como também o seu valor máximo e mínimo. É possível verificar uma simetria nas diferenças, levando a inferir que não existe diferença significativa entre o grupo A e o grupo controlado A. O gráfico abaixo apresenta uma melhor visualização dessa relação:
+
+```{r echo=FALSE}
+
+fun_boot_aa <- function(dados, i) {
+    median(dados[i])
+}
+
+bootstraps_a <- boot(data = experimentos$media_exp, statistic = fun_boot_aa, R = 5000)
+
+bootstraps_a2 <- boot(data = experimentos_a2$media_exp, statistic = fun_boot_aa, R = 5000)
+
+bootstraps <- boot(data = experimentos_finais$media_exp, statistic = fun_boot_aa, R = 5000)
+
+ci <- setNames(data.frame(matrix(ncol = 4, nrow = 2)), c("lower", "upper", "mean", "group"))
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps_a, conf = 0.95, type = "bca")$bca[4:5])
+ci[1, ] = bca[1:4]
+ci[1, ncol(ci) - 1]<- mean(bca)
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps_a2, conf = 0.95, type = "bca")$bca[4:5])
+ci[2, ] = bca[1:4]
+ci[2, ncol(ci) - 1]<- mean(bca)
+
+bca <- sapply(ci, function(y) boot.ci(bootstraps, conf = 0.95, type = "bca")$bca[4:5])
+ci[3, ] = bca[1:4]
+ci[3, ncol(ci) - 1]<- mean(bca)
+
+ci$group <- c("a", "a2", "overall")
+
+ci %>%
+  ggplot(aes(x = 1, y = mean, color = group)) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), position = position_dodge(width = 1)) +
+  scale_color_brewer("Test CI Group", palette = "Set1", guide = guide_legend(ncol = 2)) +
+  scale_y_continuous(labels = scales::percent_format(), expand = c(0.05, 0.05)) +
+  labs(x = NULL, y = "CRT by Group") +
+  geom_text(aes(label = sprintf("%.1f%%", mean * 100), y = upper + 0.0025, vjust = "bottom"),
+            position = position_dodge(width = 1)) +
+  geom_hline(aes(yintercept = mean), linetype = "dashed", color = RColorBrewer::brewer.pal(3, "Set1")[3],
+             data = filter(ci, `group` == "overall")) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+O gráfico dos intervalos de Confiança da taxa de cliques usando o teste A/A não apresentou diferença significativa. O grupo A e A2 apresentaram praticamente as mesmas médias do grupo total. Assim, a taxa de cliques para o grupo A, A2 e grupo total é relativamente igual durante todos os dias.
+
+###3) Conclusão
+
+Após a exploração dos dados do Wimedia Foundation, verificamos a inferencia dos intervalos de confiança nas perguntas realizadas no [checkpoint 2](http://rpubs.com/aminueza/DiscoveryHiringAnalyst2016). Foram observadas que a taxa de cliques do Grupo A é significativamente maior que no grupo B. Correlacionando com a taxa de zero resultados, que é significativamente maior no grupo B, é possível verificar uma relação entre essas duas variáveis. Se um resultado não é apresentado, consequentemente ele terá uma taxa de cliques menor. Ao contrário do grupo A, que apresentou uma taxa de cliques maior e uma taxa de zero resultados menor.
+Verificando a taxa de cliques, foi possível verificar uma diferença significativa nos cliques a partir do primeiro resultado, ou seja, o primeiro resultado possui um número maior de cliques, seguido do segundo e terceiro resultados.
+O último teste, analisou a correlação dos testes A/A com a taxa de cliques. A partir dos intervalos de confiança foi possível verificar que a taxa de cliques do grupo A e do grupo controlado A2 são relativamente iguais a taxa de cliques geral para os dois grupos. Assim, é possível inferir que não há diferença significativa do CRT para as três variáveis.

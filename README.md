@@ -1,6 +1,8 @@
 # Sessões, buscas e navegação na wikimedia
 
-O sumário executivo para esta atividade pode ser visualizado no [RPUBS](http://rpubs.com/aminueza/DiscoveryHiringAnalyst2016).
+- O sumário executivo para esta atividade pode ser visualizado no [RPUBS](http://rpubs.com/aminueza/DiscoveryHiringAnalyst2016).
+
+- O report da inferência estatística pode ser visualizado no [RPUBS](http://rpubs.com/aminueza/inferencia-estatistica-wikimedia).
 
 Este repo é a semente para uma análise de padrões de busca e navegação em páginas de projetos da wikimedia (provavelmente wikipedia).
 

@@ -148,7 +148,7 @@ ctr_wikimedia %>%
 Respondendo a pergunta, primeiro é preciso entender o conceito de *ClickThrough Rate* (CTR). CRT ou taxa de cliques é calculado como a proporção de anúncios clicados pelos resultados exibidos a cada sessão. Assim, temos: 
 \begin{equation}CTR = \frac{ResultadosClicados}{TodosResultadosPesquisadosPorSessão}\end{equation}
 
-Para analisar por sessão, é necessário filtrar todos os eventos que possuem uma seção única e que apresentam uma Página de Retorno do Motor de Busca (SERP) associada a ela. Também, 
+Para analisar por sessão, é necessário filtrar todos os eventos que possuem uma seção única e que apresentam uma Página de Retorno do Motor de Busca (SERP) associada a ela.
 
 ```{r}
 #Removendo sessões duplicadas
