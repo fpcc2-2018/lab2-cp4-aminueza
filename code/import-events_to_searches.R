@@ -15,6 +15,7 @@ events = events %>%
     group_by(session_id) %>% 
     arrange(timestamp) %>% 
     mutate(search_index = cumsum(action == "searchResultPage")) # contador para as buscas nessa sessão.
+ungroup()
 
 searches = events %>% 
     group_by(session_id, search_index) %>% 
