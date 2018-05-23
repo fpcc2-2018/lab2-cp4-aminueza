@@ -451,6 +451,8 @@ basic <- sapply(ci, function(y) boot.ci(bootstraps_a, conf = 0.95, type = "basic
 ci[1, ] = basic[1:4]
 ci[1, ncol(ci) - 1]<- mean(basic)
 
+print(boot.ci(bootstraps_a, conf = 0.95, type = "basic")$basic[4:5])
+
 basic <- sapply(ci, function(y) boot.ci(bootstraps_a2, conf = 0.95, type = "basic")$basic[4:5])
 ci[2, ] = basic[1:4]
 ci[2, ncol(ci) - 1]<- mean(basic)
