@@ -1,0 +1,172 @@
+---
+title: "FPCC II - Lab 3, Checkpoint 4"
+author: "Amanda Souza"
+date: "24/05/2018"
+output: html_document
+---
+
+Testes de Hipótese: Discovery Hiring Analyst 2016
+===============
+
+### Sumário
+
+1. Introdução
+2. *Imports* e Limpeza dos dados
+3. Respondendo as perguntas por meio de Teste de Hipótese
+4. Vantagens e desvantages entre ICs e NHST
+5. Conclusão
+
+###1) Introdução
+
+Os dados analisados neste relatório podem ser melhor explorados no [Rpubs](http://rpubs.com/aminueza/DiscoveryHiringAnalyst2016) do laboratório anterior, provenientes de um modelo de rastreamento que a [Wikimedia Foundation](https://grafana.wikimedia.org/dashboard/db/eventlogging-schema) usa para avaliar o nível de satisfação do usuário. A proposta desse relatório é verificar as mesmas variáveis usando testes de hipóteses.
+
+###2) *Imports* e Limpeza dos dados
+
+Primeiramente, vamos importar os dados para a variável `wikimedia`:
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(knitr)
+library(lubridate)
+library(resample) # <-- Para bootstrap!
+library(boot) # <-- Para bootstrap!
+
+wikimedia = read_csv("/Users/amandasouza/lab2-cp4-aminueza/data/search_data.csv")
+```
+
+Neste passo, vamos realizar uma limpeza nos dados. Primeiro, remover as seções duplicadas e formatar a data por dia:
+
+```{r}
+#Removendo sessões duplicadas
+wikimedia = wikimedia %>% 
+    distinct(session_id, .keep_all = T) %>%
+    filter(results >= first_click | (is.na(first_click) & num_clicks == 0)) %>%
+    mutate(session_start_date = round_date(session_start_date, unit = "day"))
+
+```
+
+###3) Respondendo as perguntas por meio de Teste de Hipótese
+**1. What is our daily overall clickthrough rate? How does it vary between the groups?**
+
+Antes de efetuar o teste de hipótese, primeiro vamos analisar o intervalo de confiança para a amostra do *clickthrough rate* entre os Grupos A e B:
+
+```{r}
+# Bootstrap calculando a diferenca entre os grupos
+ boot.diff.means = wikimedia %>%
+     group_by(session_start_date, group) %>% 
+     summarise(crt = sum(num_clicks > 0) / n()) %>%
+     bootstrap2(mean(crt), 
+                treatment = group, 
+                       R = 10000)
+ 
+ means.diff = CI.percentile(boot.diff.means, probs = c(.025, .975)) #confianca de 95%
+ 
+ data.frame(means.diff) %>% 
+   ggplot(aes(x = "Diferença", ymin = X2.5., ymax = X97.5.))+ 
+   geom_errorbar(width = .2) +
+   geom_point(aes(y = boot.diff.means$stats$Mean)) +
+   scale_y_continuous(labels = scales::percent_format()) +
+   scale_color_brewer(palette="Set1") +
+    geom_hline(aes(yintercept = boot.diff.means$stats$Mean), linetype = "dashed", color = RColorBrewer::brewer.pal(3, "Set1")[1]) +
+   labs(title = "Intervalo de Confiança", 
+       y = "Diferença das medianas (A - B)",
+       x = NULL) + 
+  theme_classic()
+```
+
+Na atividade anterior, foi possível concluir, **com 95% de confiança que existe uma diferença significativa entre a taxa de cliques do grupo A e o grupo B**, apresentando uma diferença entre os ICs de 23.16% e 27.45%. A linha vermelha representa a média das diferenças, que foi de 25.18%.
+
+Agora, vamos efetuar os testes de hipótese com permutação, pois esse método apresenta robustez e é não-paramétrico. Primeiramente vamos definir a hipótese nula ($H_0$) e alternativa ($H_A$):
+
+**$H_0$**: A mediana do grupo A é igual a mediana do grupo B. (Não há diferença significativa entre as medianas).
+$$H_0: M_{a} = M_{b}$$
+**$H_A$**: A mediana do grupo A é diferente a mediana do grupo B. (Existe diferença significativa entre as medianas).
+$$H_A: M_{a} \neq M_{b}$$
+
+Ainda, o **tipo de teste de hipótese aplicado será o *two-tailed***, com nível de significância $\alpha=0.05$ para aceitar ou rejeitar a hipótese nula.
+
+```{r}
+pvalue <- wikimedia %>%
+    group_by(session_start_date, group) %>%
+    summarise(crt = sum(num_clicks > 0) / n()) %>%
+    permutationTest2(mean(crt),
+                       treatment = group,
+                       alternative = "two.sided",
+                       R = 10000)
+
+pvalue$stats %>% t() %>% kable()
+```
+
+Como é visto nos dados da tabela, temos um $p-value$ com um valor muito baixo ($P-value = 0.00019998$). Dado esse valor de $p$ é possível rejeitar $H_{0}$ com a segurança de um $p-value < 0.05$, como foi suposto inicialmente. Ou seja, a mediana do grupo A não é igual a mediana do grupo B. Também é possível concluir que podemos aceitar $H_{A}$, pois existe uma diferença na taxa de cliques diários entre os grupos A e B. Portanto, não há uma variação da taxa de cliques diária entre os grupos A e B.
+
+Uma observação adicional pode ser apontada. Mesmo que a significância seja $\alpha=0.01$, ou seja, um nível de confiança de $99\%$, ainda teríamos uma diferença significativa entre os grupos A e B, uma vez que o valor de $p$ ficou abaixo de $p-value < 0.01$.
+
+**3. What is our daily overall zero results rate? How does it vary between the groups?**
+
+Na terceira pergunta, verificamos a taxa de *zero results* entre os grupos A e B:
+
+```{r}
+# Bootstrap calculando a diferenca entre os grupos
+ zero.diff.means = wikimedia %>%
+     group_by(session_start_date, group) %>% 
+      summarise(zero = sum(results == 0),
+            total = n()) %>% 
+     mutate(rate = zero/total) %>%
+     bootstrap2(mean(rate), 
+                treatment = group, 
+                       R = 10000)
+
+ means.diff.zero = CI.percentile(zero.diff.means, probs = c(.025, .975)) #confianca de 95%
+ 
+ data.frame(means.diff.zero) %>% 
+   ggplot(aes(x = "Diferença", ymin = X2.5., ymax = X97.5.))+ 
+   geom_errorbar(width = .2) +
+   geom_point(aes(y = zero.diff.means$stats$Mean)) +
+   scale_y_continuous(labels = scales::percent_format()) +
+   scale_color_brewer(palette="Set1") +
+    geom_hline(aes(yintercept = zero.diff.means$stats$Mean), linetype = "dashed", color = RColorBrewer::brewer.pal(3, "Set1")[1]) +
+   labs(title = "Intervalo de Confiança", 
+       y = "Diferença das medianas (A - B)",
+       x = NULL) + 
+  theme_classic()
+```
+
+Pelo gráfico da diferença, foi possível concluir, **com 95% de confiança que existe uma diferença significativa entre a taxa de cliques do grupo A e o grupo B**. Entretanto, os ICs dessa diferença apresentaram valores negativos. Isso significa que nesse caso, o Grupo B apresenta a taxa de zero resultados maiores que o grupo A, uma vez que a diferença é permutada entre A - B. A média das diferenças foi de -4.55%.
+
+Assim como para a primeira pergunta, nessa etapa vamos efetuar os testes de hipótese com permutação, definindo a hipótese nula ($H_0$) e alternativa ($H_A$):
+
+**$H_0$**: A mediana do grupo A é igual a mediana do grupo B. (Não há diferença significativa entre as medianas).
+$$H_0: M_{a} = M_{b}$$
+**$H_A$**: A mediana do grupo A é diferente a mediana do grupo B. (Existe diferença significativa entre as medianas).
+$$H_A: M_{a} \neq M_{b}$$
+
+Também, usaremos o mesmo tipo de teste anterior (*two-tailed*). Entretanto, o intervalo de confiança comprova um diferença significativa entre a taxa de zero resultados do Grupo A e B. Logo, poderíamos testar com uma taxa de confiança maior, ou seja $99\%$. Dando uma significância estatística para o erro de nível I bastante robusta e provar que existe diferença na taxa de zero resultados entre os grupos e com nível de significância de $\alpha=0.01$ para aceitar ou rejeitar a hipótese nula.
+
+```{r}
+pvalue <- wikimedia %>%
+    group_by(session_start_date, group) %>% 
+    summarise(rate = (sum(results == 0)/n())) %>%
+    permutationTest2(median(rate),
+                       treatment = group,
+                       alternative = "two.sided",
+                       R = 10000)
+
+pvalue$stats %>% t() %>% kable()
+```
+
+Como pode ser visto na tabela, temos um $p-value$ com um valor muito altamente abaixo do nível de significância $p-value < 0.01$. Assim, podemos rejeitar com segurança $H_{0}$, como suposto inicialmente. Também, podemos concluir que existe uma diferença significativa na taxa de zero resultados entre o Grupo A e B, pois aceitamos $H_{A}$. 
+
+###4) Vantagens e desvantages entre ICs e NHST
+
+Um artigo de [Cumming](http://journals.sagepub.com/doi/pdf/10.1177/0956797613504966)[2014] afirma que “Os valores de CI e p-value baseiam-se na mesma teoria estatística”. Entretanto, não acho que funciona dessa forma. O teste de hipótese, na minha opinião, é mais simples de interpretar, pois dada uma hipótese nula, podemos verificar se o seu valor está abaixo ou acima da significância pré-estabelecida e rejeitar ou aceitar essa hipótese. Também os testes de hipóteses, no caso o $p-value$, são mais simples de serem feitos na linguagem R. Entretanto, os testes de hipótese não explicam muito sobre a população observada. Os testes de hipóteses referem-se a uma única conclusão de significância ou não significância estatística. Se uma hipótese é nula, ela é apenas nula e nada mais.
+
+Os intervalos de confiança fornecem uma variedade de valores plausíveis para sua população e os efeitos desses valores nas amostras. Ele também pode ser usado para explicar os efeitos das hipóteses nulas por meio dos seus intervalos. Os ICs trabalham com as hipóteses alternativas, com probabilidades de intervalo de amostra conhecidas, mas com parâmetros populacionais desconhecidos, e calculam os ICs para descrever essas populações. Ele é mais explicativo e leva o pesquisador a tomar conclusões mais abrangentes devido a sua variedade de interpretações. Considerando o uso do R, eu particularmente achei mais complexo de ser usado, principalmente usando *bootstraping*. Em termos de plotagem, o intervalo de confiança é mais dinâmicos, ofererendo uma diversidade de gráficos que podem ser feitos.Os testes de hipóteses, na minha opinião são menos intuitivos, principalmente para iniciantes em análise de dados, pois a única forma, na minha visão que pode ser apresentado esse valor, é por meio de tabelas.
+
+###5) Conclusões
+
+Por meio dos testes de hipótese usando permutação com o teste *two-tailed*, e nível de significância de $\alpha=0.05$, foi possível concluir que na primeira pergunta sobre a taxa de cliques, há uma diferença significativa entre os Grupos A e B, e foram provadas a partir da rejeição da hipótese nula. 
+
+A taxa de zero resultados, também apresentou uma diferença significativa entre os Grupos A e B, com uma significância mais estritamente robusta ($\alpha=0.01$), para rejeição da hipótese nula.
+
+Os testes de hipóteses são menos explicativos que os intervalos de confiança, uma vez que eles não permitem uma explicação maior das variáveis estudadas, como por exemplo, explicar qual grupo apresenta maior diferença significativa. Entretanto, os intervalos de confiança permitem trabalhar com as hipóteses alternativas e uma melhor exploração das variáveis.
