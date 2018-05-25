@@ -47,6 +47,8 @@ wikimedia = wikimedia %>%
 ```
 
 ###3) Respondendo as perguntas por meio de Teste de Hipótese
+
+
 **1. What is our daily overall clickthrough rate? How does it vary between the groups?**
 
 Antes de efetuar o teste de hipótese, primeiro vamos analisar o intervalo de confiança para a amostra do *clickthrough rate* entre os Grupos A e B:
