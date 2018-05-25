@@ -82,8 +82,11 @@ Na atividade anterior, foi possível concluir, **com 95% de confiança que exist
 Agora, vamos efetuar os testes de hipótese com permutação, pois esse método apresenta robustez e é não-paramétrico. Primeiramente vamos definir a hipótese nula ($H_0$) e alternativa ($H_A$):
 
 **$H_0$**: A mediana do grupo A é igual a mediana do grupo B. (Não há diferença significativa entre as medianas).
+
 $$H_0: M_{a} = M_{b}$$
+
 **$H_A$**: A mediana do grupo A é diferente a mediana do grupo B. (Existe diferença significativa entre as medianas).
+
 $$H_A: M_{a} \neq M_{b}$$
 
 Ainda, o **tipo de teste de hipótese aplicado será o *two-tailed***, com nível de significância $\alpha=0.05$ para aceitar ou rejeitar a hipótese nula.
@@ -139,8 +142,11 @@ Pelo gráfico da diferença, foi possível concluir, **com 95% de confiança que
 Assim como para a primeira pergunta, nessa etapa vamos efetuar os testes de hipótese com permutação, definindo a hipótese nula ($H_0$) e alternativa ($H_A$):
 
 **$H_0$**: A mediana do grupo A é igual a mediana do grupo B. (Não há diferença significativa entre as medianas).
+
 $$H_0: M_{a} = M_{b}$$
+
 **$H_A$**: A mediana do grupo A é diferente a mediana do grupo B. (Existe diferença significativa entre as medianas).
+
 $$H_A: M_{a} \neq M_{b}$$
 
 Também, usaremos o mesmo tipo de teste anterior (*two-tailed*). Entretanto, o intervalo de confiança comprova um diferença significativa entre a taxa de zero resultados do Grupo A e B. Logo, poderíamos testar com uma taxa de confiança maior, ou seja $99\%$. Dando uma significância estatística para o erro de nível I bastante robusta e provar que existe diferença na taxa de zero resultados entre os grupos e com nível de significância de $\alpha=0.01$ para aceitar ou rejeitar a hipótese nula.
